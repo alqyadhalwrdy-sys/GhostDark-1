@@ -296,3 +296,10 @@ server.listen(Number(process.env.PORT)||8080,'0.0.0.0',()=>{
   console.log('GhostDark Telegram server: http://localhost:8080');
   poll();
 });
+
+const http = require('http');
+http.createServer((req,res)=>{
+  res.writeHead(200);
+  res.end('GhostDark Bot is Running');
+}).listen(process.env.PORT || 10000, ()=>console.log('HTTP OK'));
+
