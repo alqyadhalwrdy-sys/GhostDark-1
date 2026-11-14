@@ -1,304 +1,48 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-
-const env = Object.fromEntries(
-  (fs.existsSync('.env') ? fs.readFileSync('.env','utf8').split(/\r?\n/) : [])
-    .filter(x => x.includes('='))
-    .map(x => {
-      const i=x.indexOf('=');
-      return [x.slice(0,i).trim(),x.slice(i+1).trim()];
-    })
-);
-Object.assign(env, process.env);
-
-const TOKEN=env.BOT_TOKEN;
-const OWNER=String(env.OWNER_CHAT_ID || '');
-if(!TOKEN || !OWNER) throw Error('BOT_TOKEN أو OWNER_CHAT_ID مفقود');
-
-const DB='activation-data.json';
-let data=fs.existsSync(DB)
-  ? JSON.parse(fs.readFileSync(DB,'utf8'))
-  : {requests:{},users:{}};
-data.requests ||= {};
-data.users ||= {};
-
-let offset=0;
-let busy=false;
-
-function save(){
-  fs.writeFileSync(DB,JSON.stringify(data,null,2));
-}
-
-async function telegram(method,body){
-  const r=await fetch(`https://api.telegram.org/bot${TOKEN}/${method}`,{
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body:JSON.stringify(body),
-    signal:AbortSignal.timeout(30000)
-  });
-  const j=await r.json();
-  if(!j.ok) throw Error(j.description || 'Telegram API error');
-  return j.result;
-}
-
-async function poll(){
-  if(busy)return;
-  busy=true;
-  try{
-    const updates=await telegram('getUpdates',{
-      offset,timeout:20,allowed_updates:['callback_query','message']
-    });
-    for(const u of updates){
-      offset=u.update_id+1;
-      const m=u.message;
-      if(m?.text && String(m.from?.id)===OWNER && String(m.chat?.id)===OWNER){
-        const a=m.text.trim().split(/\s+/);
-        const cmd=a[0].split('@')[0];
-        const id=(a[1]||'').toUpperCase();
-        const user=data.users[id];
-        let reply='';
-        if(cmd==='/start' || cmd==='/help'){
-          reply='👻 لوحة إدارة GhostDark\\n\\n/stats الإحصائيات\\n/users قائمة المستخدمين\\n/user ID تفاصيل مستخدم\\n/ban ID حظر\\n/unban ID فك الحظر\\n/restrict ID MINUTES تقييد مؤقت';
-        }else if(cmd==='/stats'){
-          const all=Object.values(data.users);
-          const now=Date.now();
-          const banned=all.filter(x=>x.status==='banned').length;
-          const restricted=all.filter(x=>x.status==='restricted' && x.until>now).length;
-          reply=`📊 إحصائيات GhostDark\\n👥 إجمالي الزوار: ${all.length}\\n🚫 محظورون: ${banned}\\n⏳ مقيّدون حالياً: ${restricted}\\n🆕 طلبات التفعيل: ${Object.keys(data.requests).length}`;
-        }else if(cmd==='/users'){
-          const list=Object.entries(data.users).sort((a,b)=>b[1].lastSeen-a[1].lastSeen).slice(0,20);
-          if(!list.length) reply='لا يوجد مستخدمون بعد';
-          else {
-            for(const [k,v] of list){
-              const status=v.status||'active';
-              await telegram('sendMessage',{
-                chat_id:OWNER,
-                text:`👤 ${k}\\nالحالة: ${status}\\nالزيارات: ${v.visits}`,
-                reply_markup:{inline_keyboard:[
-                  [{text:'👤 التفاصيل',callback_data:`gu:info:${k}`}],
-                  status==='banned'
-                    ? [{text:'✅ فك الحظر',callback_data:`gu:unban:${k}`}]
-                    : [{text:'🚫 حظر',callback_data:`gu:ban:${k}`}],
-                  [{text:'⏳ تقييد',callback_data:`gu:restrict:${k}`}],
-                  [{text:'🔄 تحديث',callback_data:`gu:refresh:${k}`}]
-                ]}
-              });
-            }
-          }
-        }else if(cmd==='/user'){
-          reply=user?`👤 المستخدم ${id}\\nأول دخول: ${new Date(user.firstSeen).toLocaleString('en-GB')}\\nآخر استخدام: ${new Date(user.lastSeen).toLocaleString('en-GB')}\\nعدد الزيارات: ${user.visits}\\nالحالة: ${user.status||'active'}${user.until?'\\nينتهي التقييد: '+new Date(user.until).toLocaleString('en-GB'):''}`:'المستخدم غير موجود';
-        }else if(['/ban','/unban','/restrict'].includes(cmd)){
-          if(!user) reply='المستخدم غير موجود. استخدم /users';
-          else if(cmd==='/ban'){user.status='banned';delete user.until;reply=`🚫 تم حظر ${id}`;}
-          else if(cmd==='/unban'){user.status='active';delete user.until;reply=`✅ تم فك الحظر عن ${id}`;}
-          else {
-            const mins=Number(a[2]);
-            if(!Number.isInteger(mins)||mins<1||mins>525600) reply='اكتب مدة بالدقائق من 1 إلى 525600';
-            else {user.status='restricted';user.until=Date.now()+mins*60000;reply=`⏳ تم تقييد ${id} لمدة ${mins} دقيقة`;}
-          }
-          save();
-        }else if(cmd.startsWith('/')) reply='أمر غير معروف. أرسل /help';
-        if(reply) await telegram('sendMessage',{chat_id:OWNER,text:reply});
-        continue;
-      }
-      const q=u.callback_query;
-      if(!q)continue;
-
-      if(String(q.from.id)!==OWNER ||
-         String(q.message?.chat?.id)!==OWNER){
-        await telegram('answerCallbackQuery',{
-          callback_query_id:q.id,text:'غير مصرح'
-        });
-        continue;
-      }
-
-      const [prefix,action,id]=(q.data||'').split(':');
-
-      if(prefix==='gu'){
-        const user=data.users[id];
-        if(!user){
-          await telegram('answerCallbackQuery',{callback_query_id:q.id,text:'المستخدم غير موجود'});
-          continue;
-        }
-
-        const status=user.status||'active';
-        const keyboard={inline_keyboard:[
-          [{text:'👤 التفاصيل',callback_data:`gu:info:${id}`}],
-          status==='banned'
-            ? [{text:'✅ فك الحظر',callback_data:`gu:unban:${id}`}]
-            : [{text:'🚫 حظر',callback_data:`gu:ban:${id}`}],
-          [{text:'⏳ تقييد',callback_data:`gu:restrict:${id}`}],
-          [{text:'🔄 تحديث',callback_data:`gu:refresh:${id}`}]
-        ]};
-
-        if(action==='ban'){
-          user.status='banned';
-          delete user.until;
-          save();
-        }else if(action==='unban'){
-          user.status='active';
-          delete user.until;
-          save();
-        }else if(action==='restrict'){
-          await telegram('sendMessage',{
-            chat_id:OWNER,
-            text:`⏳ لتقييد المستخدم ${id} أرسل الأمر:\\n/restrict ${id} MINUTES\\nمثال: /restrict ${id} 60`
-          });
-          await telegram('answerCallbackQuery',{callback_query_id:q.id,text:'أرسل مدة التقييد بالدقائق'});
-          continue;
-        }
-
-        const updated=user.status||'active';
-        const details=`👤 المستخدم: ${id}\\nالحالة: ${updated}\\nأول دخول: ${new Date(user.firstSeen).toLocaleString('en-GB')}\\nآخر استخدام: ${new Date(user.lastSeen).toLocaleString('en-GB')}\\nعدد الزيارات: ${user.visits||0}${user.until?'\\nينتهي التقييد: '+new Date(user.until).toLocaleString('en-GB'):''}`;
-
-        await telegram('answerCallbackQuery',{
-          callback_query_id:q.id,
-          text:action==='ban'?'تم الحظر':action==='unban'?'تم فك الحظر':'تم التحديث'
-        });
-
-        await telegram('editMessageText',{
-          chat_id:OWNER,
-          message_id:q.message.message_id,
-          text:details,
-          reply_markup:keyboard
-        });
-        continue;
-      }
-
-      const item=data.requests[id];
-
-      if(prefix!=='gd' || !item){
-        await telegram('answerCallbackQuery',{
-          callback_query_id:q.id,text:'الطلب غير موجود'
-        });
-        continue;
-      }
-
-      if(item.status!=='pending'){
-        await telegram('answerCallbackQuery',{
-          callback_query_id:q.id,text:'تمت معالجة الطلب سابقاً'
-        });
-        continue;
-      }
-
-      if(action==='a')item.status='approved';
-      else if(action==='r')item.status='rejected';
-      else continue;
-
-      item.updatedAt=Date.now();
-      save();
-
-      await telegram('answerCallbackQuery',{
-        callback_query_id:q.id,
-        text:action==='a'?'تمت الموافقة':'تم الرفض'
-      });
-
-      await telegram('editMessageText',{
-        chat_id:OWNER,
-        message_id:q.message.message_id,
-        text:`طلب GhostDark: ${id}\nالحالة: ${item.status==='approved'?'تمت الموافقة ✅':'مرفوض ❌'}`
-      });
-    }
-  }catch(e){
-    console.log('Telegram polling:',e.message);
-    await new Promise(r=>setTimeout(r,4000));
-  }finally{
-    busy=false;
-  }
-  setImmediate(poll);
-}
-
-const types={
-  '.html':'text/html; charset=utf-8',
-  '.js':'text/javascript; charset=utf-8',
-  '.css':'text/css; charset=utf-8',
-  '.png':'image/png',
-  '.svg':'image/svg+xml'
-};
-
-const server=http.createServer(async(req,res)=>{
+const PORT = process.env.PORT || 10000;
+const DB_FILE = path.join(__dirname, 'db.json');
+function loadDB(){ try{return JSON.parse(fs.readFileSync(DB_FILE,'utf8'))}catch(e){return {requests:{},approved:{}}} }
+function saveDB(d){ fs.writeFileSync(DB_FILE, JSON.stringify(d,null,2)) }
+let db = loadDB();
+const server = http.createServer(async (req,res)=>{
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
-  if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200);return res.end();}
-  const url=new URL(req.url,'http://localhost');
-
-  if(req.method==='POST' && url.pathname==='/api/visit'){
-    let body='';
-    req.on('data',c=>{body+=c;if(body.length>2000)req.destroy();});
-    req.on('end',()=>{
+  if(req.method==='OPTIONS'){ res.writeHead(204); res.end(); return; }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  console.log(req.method, url.pathname);
+  if(url.pathname==='/'){ res.writeHead(200,{'Content-Type':'text/plain'}); res.end('GhostDark API Live'); return; }
+  if(url.pathname==='/api/status'){
+    const id = url.searchParams.get('id');
+    const approved = !!(db.approved && db.approved[id]);
+    res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({approved})); return;
+  }
+  if(url.pathname==='/api/visit' && req.method==='POST'){
+    let body=''; req.on('data',c=>body+=c); req.on('end',()=>{
+      try{ const {id}=JSON.parse(body); console.log('VISIT',id); }catch(e){}
+      res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true}));
+    }); return;
+  }
+  if(url.pathname==='/api/request' && req.method==='POST'){
+    let body=''; req.on('data',c=>body+=c); req.on('end',async ()=>{
       try{
-        const input=JSON.parse(body||'{}');
-        const id=String(input.id||'').toUpperCase();
-        if(!/^[A-F0-9]{16,40}$/.test(id)){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(400);return res.end('Bad ID');}
-        const now=Date.now();
-        const u=data.users[id] ||= {firstSeen:now,lastSeen:now,visits:0,status:'active'};
-        u.lastSeen=now;u.visits++;
-        if(u.status==='restricted' && u.until<=now){u.status='active';delete u.until;}
-        save();
-        res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
-        res.end(JSON.stringify({status:u.status,until:u.until||null,id}));
-      }catch(e){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(400);res.end('Bad request');}
-    });
-    return;
-  }
-
-  if(req.method==='POST' && url.pathname==='/api/request'){
-    try{
-      const id=crypto.randomBytes(6).toString('hex').toUpperCase();
-      data.requests[id]={status:'pending',createdAt:Date.now()};
-      save();
-
-      await telegram('sendMessage',{
-        chat_id:OWNER,
-        text:`👻 طلب تفعيل جديد في GhostDark\nرقم الطلب: ${id}`,
-        reply_markup:{
-          inline_keyboard:[[
-            {text:'✅ موافقة',callback_data:`gd:a:${id}`},
-            {text:'❌ رفض',callback_data:`gd:r:${id}`}
-          ]]
+        const data=JSON.parse(body);
+        const id=data.id||'unknown';
+        db.requests[id]={...data,time:new Date().toISOString()};
+        saveDB(db);
+        console.log('NEW REQUEST',id);
+        const BOT_TOKEN=process.env.BOT_TOKEN;
+        const CHAT_ID=process.env.CHAT_ID;
+        if(BOT_TOKEN && CHAT_ID){
+          const msg=`🔔 طلب جديد GhostDark\nID: ${id}\nName: ${data.name||''}\n${data.message||''}`;
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:CHAT_ID,text:msg})}).then(r=>r.json()).then(j=>console.log('TG',j)).catch(e=>console.error('TG ERR',e));
         }
-      });
-
-      res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
-      res.end(JSON.stringify({request:id}));
-    }catch(e){
-      console.log('Request error:',e.message);
-      res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(502,{'content-type':'application/json'});
-      res.end(JSON.stringify({error:'تعذر إرسال الطلب إلى البوت'}));
-    }
-    return;
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true}));
+      }catch(e){ console.error(e); res.writeHead(500); res.end('error'); }
+    }); return;
   }
-
-  if(req.method==='GET' && url.pathname==='/api/status'){
-    const item=data.requests[url.searchParams.get('id')];
-    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
-    res.end(JSON.stringify({status:item?.status || 'unknown'}));
-    return;
-  }
-
-  if(req.method!=='GET'){
-    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(405);return res.end('Method not allowed');
-  }
-
-  let file=path.resolve(__dirname,'.'+decodeURIComponent(url.pathname));
-  if(!file.startsWith(__dirname+path.sep) && file!==path.join(__dirname,'index.html')){
-    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(403);return res.end('Forbidden');
-  }
-  if(url.pathname==='/')file=path.join(__dirname,'index.html');
-
-  fs.readFile(file,(err,buf)=>{
-    if(err){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(404);return res.end('Not found');}
-    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':types[path.extname(file)]||'application/octet-stream'});
-    res.end(buf);
-  });
+  res.writeHead(404); res.end('not found');
 });
-
-server.listen(Number(process.env.PORT)||10000,'0.0.0.0',()=>{
-  console.log('GhostDark Telegram server: http://localhost:8080');
-  poll();
-});
-
-const http = require('http');
+server.listen(PORT, '0.0.0.0', ()=>console.log('Listening on '+PORT));
