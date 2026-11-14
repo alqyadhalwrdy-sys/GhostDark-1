@@ -226,7 +226,7 @@ async function waitForApproval(id){
   for(let i=0;i<180;i++){
     await new Promise(resolve=>setTimeout(resolve,2000));
     try{
-      const r=await fetch("/api/status?id="+encodeURIComponent(id));
+      const r=await fetch("https://ghostdark-1.onrender.com/api/status?id="+encodeURIComponent(id));
       const d=await r.json();
       if(d.status==="approved"){
         localStorage.setItem("ghostActivationApproved","yes");
@@ -249,7 +249,7 @@ async function requestActivation(){
   const error=document.getElementById("error");
   error.textContent="جارٍ إرسال طلب التفعيل...";
   try{
-    const response=await fetch("/api/request",{method:"POST"});
+    const response=await fetch("https://ghostdark-1.onrender.com/api/request",{method:"POST"});
     const data=await response.json();
     if(!response.ok)throw new Error(data.error||"تعذر إرسال الطلب");
     localStorage.setItem("ghostActivationRequest",data.request);
@@ -551,7 +551,7 @@ function stopScan(){
   let blocked=false;
   async function checkGhostStatus(){
     try{
-      const r=await fetch('/api/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+      const r=await fetch('https://ghostdark-1.onrender.com/api/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
       const d=await r.json();
       if(d.status==='banned'||d.status==='restricted'){
         blocked=true;
