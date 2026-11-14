@@ -219,6 +219,10 @@ const types={
 };
 
 const server=http.createServer(async(req,res)=>{
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  if(req.method==='OPTIONS'){res.writeHead(200);return res.end();}
   const url=new URL(req.url,'http://localhost');
 
   if(req.method==='POST' && url.pathname==='/api/visit'){
@@ -292,14 +296,9 @@ const server=http.createServer(async(req,res)=>{
   });
 });
 
-server.listen(Number(process.env.PORT)||8080,'0.0.0.0',()=>{
+server.listen(Number(process.env.PORT)||10000,'0.0.0.0',()=>{
   console.log('GhostDark Telegram server: http://localhost:8080');
   poll();
 });
 
 const http = require('http');
-http.createServer((req,res)=>{
-  res.writeHead(200);
-  res.end('GhostDark Bot is Running');
-}).listen(process.env.PORT || 10000, ()=>console.log('HTTP OK'));
-
