@@ -1,0 +1,13 @@
+name: Keep Alive Every Minute
+on:
+  schedule:
+    - cron: '* * * * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s https://ghostdark-1.onrender.com/ || true
+          curl -s https://ghostdark-1.onrender.com/health || true
+          echo "Pinged at $(date)"
