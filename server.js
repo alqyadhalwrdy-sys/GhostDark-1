@@ -1,48 +1,46 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const PORT = process.env.PORT || 10000;
-const DB_FILE = path.join(__dirname, 'db.json');
-function loadDB(){ try{return JSON.parse(fs.readFileSync(DB_FILE,'utf8'))}catch(e){return {requests:{},approved:{}}} }
-function saveDB(d){ fs.writeFileSync(DB_FILE, JSON.stringify(d,null,2)) }
-let db = loadDB();
-const server = http.createServer(async (req,res)=>{
-  res.setHeader('Access-Control-Allow-Origin','*');
-  res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers','Content-Type');
-  if(req.method==='OPTIONS'){ res.writeHead(204); res.end(); return; }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  console.log(req.method, url.pathname);
-  if(url.pathname==='/'){ res.writeHead(200,{'Content-Type':'text/plain'}); res.end('GhostDark API Live'); return; }
-  if(url.pathname==='/api/status'){
-    const id = url.searchParams.get('id');
-    const approved = !!(db.approved && db.approved[id]);
-    res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({approved})); return;
-  }
-  if(url.pathname==='/api/visit' && req.method==='POST'){
-    let body=''; req.on('data',c=>body+=c); req.on('end',()=>{
-      try{ const {id}=JSON.parse(body); console.log('VISIT',id); }catch(e){}
-      res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true}));
-    }); return;
-  }
-  if(url.pathname==='/api/request' && req.method==='POST'){
-    let body=''; req.on('data',c=>body+=c); req.on('end',async ()=>{
-      try{
-        const data=JSON.parse(body);
-        const id=data.id||'unknown';
-        db.requests[id]={...data,time:new Date().toISOString()};
-        saveDB(db);
-        console.log('NEW REQUEST',id);
-        const BOT_TOKEN=process.env.BOT_TOKEN;
-        const CHAT_ID=process.env.CHAT_ID;
-        if(BOT_TOKEN && CHAT_ID){
-          const msg=`🔔 طلب جديد GhostDark\nID: ${id}\nName: ${data.name||''}\n${data.message||''}`;
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:CHAT_ID,text:msg})}).then(r=>r.json()).then(j=>console.log('TG',j)).catch(e=>console.error('TG ERR',e));
-        }
-        res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true}));
-      }catch(e){ console.error(e); res.writeHead(500); res.end('error'); }
-    }); return;
-  }
-  res.writeHead(404); res.end('not found');
+const express = require('express');
+const cors = require('cors');
+const fetch = require('node-fetch');
+const app = express();
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
+app.use(cors({origin:'*'}));
+app.use(express.json());
+let requests = {};
+
+app.get('/', (req,res)=>res.send('OK'));
+app.post('/api/request', async (req,res)=>{
+  const id = req.body.id.toString().toUpperCase().slice(0,20);
+  requests[id] = {status:'pending'}; // يبقى معلق لحد ما توافق انت
+  try{
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id:ADMIN_ID, text:`🔔 طلب جديد:\n${id}\n\nوافق: /approve ${id}\nارفض: /reject ${id}`})
+    });
+  }catch(e){}
+  res.json({ok:true, id, status:'pending'});
 });
-server.listen(PORT, '0.0.0.0', ()=>console.log('Listening on '+PORT));
+app.get('/api/status',(req,res)=>{
+  const id=(req.query.id||'').toUpperCase();
+  res.json(requests[id]||{status:'unknown'});
+});
+app.post(`/webhook/${BOT_TOKEN}`, async (req,res)=>{
+  res.sendStatus(200);
+  const t=req.body.message?.text||''; const chat=req.body.message?.chat?.id;
+  if(chat?.toString()!==ADMIN_ID?.toString()) return;
+  if(t.startsWith('/approve')){
+    const id=t.split(' ')[1]?.toUpperCase(); if(id){requests[id]={status:'approved'};
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chat_id:ADMIN_ID, text:`✅ وافقت على ${id}`})});
+    }
+  } else if(t.startsWith('/reject')){
+    const id=t.split(' ')[1]?.toUpperCase(); if(id){requests[id]={status:'rejected'};
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chat_id:ADMIN_ID, text:`❌ رفضت ${id}`})});
+    }
+  } else if(t.startsWith('/help')||t.startsWith('/start')){
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chat_id:ADMIN_ID, text:`/approve CODE\n/reject CODE\n/list`})});
+  } else if(t.startsWith('/list')){
+    let l=Object.keys(requests).map(k=>`${k}:${requests[k].status}`).join('\n')||'فارغ';
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({chat_id:ADMIN_ID, text:l})});
+  }
+});
+app.listen(process.env.PORT||3000);
