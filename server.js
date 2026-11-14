@@ -222,7 +222,7 @@ const server=http.createServer(async(req,res)=>{
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
-  if(req.method==='OPTIONS'){res.writeHead(200);return res.end();}
+  if(req.method==='OPTIONS'){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200);return res.end();}
   const url=new URL(req.url,'http://localhost');
 
   if(req.method==='POST' && url.pathname==='/api/visit'){
@@ -232,15 +232,15 @@ const server=http.createServer(async(req,res)=>{
       try{
         const input=JSON.parse(body||'{}');
         const id=String(input.id||'').toUpperCase();
-        if(!/^[A-F0-9]{16,40}$/.test(id)){res.writeHead(400);return res.end('Bad ID');}
+        if(!/^[A-F0-9]{16,40}$/.test(id)){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(400);return res.end('Bad ID');}
         const now=Date.now();
         const u=data.users[id] ||= {firstSeen:now,lastSeen:now,visits:0,status:'active'};
         u.lastSeen=now;u.visits++;
         if(u.status==='restricted' && u.until<=now){u.status='active';delete u.until;}
         save();
-        res.writeHead(200,{'content-type':'application/json'});
+        res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
         res.end(JSON.stringify({status:u.status,until:u.until||null,id}));
-      }catch(e){res.writeHead(400);res.end('Bad request');}
+      }catch(e){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(400);res.end('Bad request');}
     });
     return;
   }
@@ -262,11 +262,11 @@ const server=http.createServer(async(req,res)=>{
         }
       });
 
-      res.writeHead(200,{'content-type':'application/json'});
+      res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
       res.end(JSON.stringify({request:id}));
     }catch(e){
       console.log('Request error:',e.message);
-      res.writeHead(502,{'content-type':'application/json'});
+      res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(502,{'content-type':'application/json'});
       res.end(JSON.stringify({error:'تعذر إرسال الطلب إلى البوت'}));
     }
     return;
@@ -274,24 +274,24 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='GET' && url.pathname==='/api/status'){
     const item=data.requests[url.searchParams.get('id')];
-    res.writeHead(200,{'content-type':'application/json'});
+    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':'application/json'});
     res.end(JSON.stringify({status:item?.status || 'unknown'}));
     return;
   }
 
   if(req.method!=='GET'){
-    res.writeHead(405);return res.end('Method not allowed');
+    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(405);return res.end('Method not allowed');
   }
 
   let file=path.resolve(__dirname,'.'+decodeURIComponent(url.pathname));
   if(!file.startsWith(__dirname+path.sep) && file!==path.join(__dirname,'index.html')){
-    res.writeHead(403);return res.end('Forbidden');
+    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(403);return res.end('Forbidden');
   }
   if(url.pathname==='/')file=path.join(__dirname,'index.html');
 
   fs.readFile(file,(err,buf)=>{
-    if(err){res.writeHead(404);return res.end('Not found');}
-    res.writeHead(200,{'content-type':types[path.extname(file)]||'application/octet-stream'});
+    if(err){res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(404);return res.end('Not found');}
+    res.setHeader('Access-Control-Allow-Origin','*'); res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Content-Type'); if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;} res.writeHead(200,{'content-type':types[path.extname(file)]||'application/octet-stream'});
     res.end(buf);
   });
 });
